@@ -27,7 +27,7 @@ from app.schema import (
     Conversation as ConversationSchema,
     DocumentMetadataKeysEnum,
 )
-from app.chat.constants import (
+from app.chat.notebook_constants import (
     NODE_PARSER_CHUNK_OVERLAP,
     NODE_PARSER_CHUNK_SIZE,
     SYSTEM_MESSAGE,
@@ -69,7 +69,12 @@ async def get_chat_engine(
 
     vector_query_engine_tools = [
         QueryEngineTool(
+            # index.as_query_engine with MetadataFilters to we know this
+            # is for node with the metadata db_document_id being equal doc_id
             query_engine=index_to_query_engine(doc_id, index),
+            # metadata helps the agent to know if it has to use this QueryEngineTool or not.
+            # Ex: if question about the company X, and QueryEngineTool is for the company X,
+            # then agent know it has to use this QueryEngineTool.
             metadata=ToolMetadata(
                 name=doc_id,
                 description=build_description_for_document(id_to_doc[doc_id]),
@@ -78,52 +83,28 @@ async def get_chat_engine(
         for doc_id, index in doc_id_to_index.items()
     ]
 
-    response_synth = get_custom_response_synth(service_context, conversation.documents)
+    # response_synth = get_custom_response_synth(service_context, conversation.documents)
 
-    qualitative_question_engine = SubQuestionQueryEngine.from_defaults(
-        query_engine_tools=vector_query_engine_tools,
-        service_context=service_context,
-        response_synthesizer=response_synth,
-        verbose=settings.VERBOSE,
-        use_async=True,
-    )
+    # qualitative_question_engine = SubQuestionQueryEngine.from_defaults(
+    #     query_engine_tools=vector_query_engine_tools,
+    #     service_context=service_context,
+    #     response_synthesizer=response_synth,
+    #     verbose=settings.VERBOSE,
+    #     use_async=True,
+    # )
 
-    api_query_engine_tools = [
-        get_api_query_engine_tool(doc, service_context)
-        for doc in conversation.documents
-        if DocumentMetadataKeysEnum.SEC_DOCUMENT in doc.metadata_map
-    ]
-
-    quantitative_question_engine = SubQuestionQueryEngine.from_defaults(
-        query_engine_tools=api_query_engine_tools,
-        service_context=service_context,
-        response_synthesizer=response_synth,
-        verbose=settings.VERBOSE,
-        use_async=True,
-    )
-
-    top_level_sub_tools = [
-        QueryEngineTool(
-            query_engine=qualitative_question_engine,
-            metadata=ToolMetadata(
-                name="qualitative_question_engine",
-                description="""
-A query engine that can answer qualitative questions about a set of SEC financial documents that the user pre-selected for the conversation.
-Any questions about company-related headwinds, tailwinds, risks, sentiments, or administrative information should be asked here.
-""".strip(),
-            ),
-        ),
-        QueryEngineTool(
-            query_engine=quantitative_question_engine,
-            metadata=ToolMetadata(
-                name="quantitative_question_engine",
-                description="""
-A query engine that can answer quantitative questions about a set of SEC financial documents that the user pre-selected for the conversation.
-Any questions about company-related financials or other metrics should be asked here.
-""".strip(),
-            ),
-        ),
-    ]
+    #     top_level_sub_tools = [
+    #         QueryEngineTool(
+    #             query_engine=qualitative_question_engine,
+    #             metadata=ToolMetadata(
+    #                 name="qualitative_question_engine",
+    #                 description="""
+    # A query engine that can answer qualitative questions about a set of SEC financial documents that the user pre-selected for the conversation.
+    # Any questions about company-related headwinds, tailwinds, risks, sentiments, or administrative information should be asked here.
+    # """.strip(),
+    #             ),
+    #         )
+    #     ]
 
     chat_llm = OpenAI(
         temperature=0,
@@ -144,11 +125,12 @@ Any questions about company-related financials or other metrics should be asked 
 
     curr_date = datetime.utcnow().strftime("%Y-%m-%d")
     chat_engine = OpenAIAgent.from_tools(
-        tools=top_level_sub_tools,
+        # tools=top_level_sub_tools,
+        tools=vector_query_engine_tools,
         llm=chat_llm,
         chat_history=chat_history,
         verbose=settings.VERBOSE,
-        system_prompt=SYSTEM_MESSAGE.format(doc_titles=doc_titles, curr_date=curr_date),
+        # system_prompt=SYSTEM_MESSAGE.format(doc_titles=doc_titles, curr_date=curr_date),
         callback_manager=service_context.callback_manager,
         max_function_calls=3,
     )
